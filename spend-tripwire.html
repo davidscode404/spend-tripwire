@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spend Tripwire — Ad Agent Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #06080a;
+  --surface:   #0c0f13;
+  --surface2:  #121620;
+  --border:    #1e2330;
+  --border2:   #2d3345;
+  --text:      #d4dae8;
+  --muted:     #6b7a96;   /* was #485060 — much more readable in dark mode */
+  --muted2:    #8a9ab8;   /* secondary muted for labels */
+  --mono:      'Space Mono', monospace;
+  --sans:      'Rajdhani', sans-serif;
+  --green:     #00f080;  --green-dim: #004d28;  --green-bg: #020f08;
+  --amber:     #ffc130;  --amber-dim: #4a3200;  --amber-bg: #100b00;
+  --red:       #ff3558;  --red-dim:   #4a0018;  --red-bg:   #120007;
+  --blue:      #4aabff;  --blue-dim:  #0d3060;  --blue-bg:  #040f1e;
+}
+
+html, body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:var(--mono); }
+
+body::before {
+  content:''; position:fixed; inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.025) 3px,rgba(0,0,0,.025) 4px);
+  pointer-events:none; z-index:9999;
+}
+body::after {
+  content:''; position:fixed; inset:12px;
+  border:1px solid var(--border2); pointer-events:none; z-index:9998;
+}
+
+/* ── Shell ── */
+.shell {
+  display:grid;
+  grid-template-rows: 52px 1fr 44px;
+  width:100vw; height:100vh;
+  padding:12px; gap:0;
+}
+
+/* ── Header ── */
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 20px; border-bottom:1px solid var(--border2);
+  background:linear-gradient(180deg, rgba(255,255,255,.015) 0%, transparent 100%);
+}
+.hdr-left { display:flex; align-items:center; gap:20px; }
+.logo { font-family:var(--sans); font-size:22px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+.logo em { color:var(--green); font-style:normal; }
+.sys-tag { font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted2); border:1px solid var(--border2); padding:3px 10px; }
+.hdr-right { display:flex; align-items:center; gap:28px; }
+.live-badge { display:flex; align-items:center; gap:8px; font-size:10px; letter-spacing:.14em; color:var(--green); }
+.live-dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 10px var(--green),0 0 22px var(--green); animation:blink 1.8s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(.75)} }
+.hdr-clock { font-size:12px; color:var(--muted2); letter-spacing:.1em; min-width:80px; text-align:right; }
+
+/* ── Main grid ── */
+.main-grid {
+  display:grid;
+  grid-template-columns: 1fr 1fr 290px;
+  grid-template-rows: 148px 1fr 190px;
+  gap:1px; background:var(--border); overflow:hidden;
+}
+
+.panel { background:var(--bg); display:flex; flex-direction:column; overflow:hidden; }
+
+.panel-head {
+  padding:9px 16px; font-size:9px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--muted2); border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center; flex-shrink:0;
+  background:linear-gradient(180deg, rgba(255,255,255,.012) 0%, transparent 100%);
+}
+.panel-head-val { font-size:10px; letter-spacing:.06em; color:var(--muted2); }
+
+/* ── Spend panel ── */
+.spend-panel { grid-column:1/4; grid-row:1; position:relative; overflow:hidden; }
+
+/* ── Header zone blocks ── */
+.hdr-zone {
+  display:flex; flex-direction:row; align-items:center; gap:10px;
+  padding:0 14px 0 16px; border-right:1px solid var(--border2);
+  position:relative; overflow:hidden; transition:background .5s;
+}
+.hdr-zone.active-green { background:var(--green-bg); }
+.hdr-zone.active-amber { background:var(--amber-bg); }
+.hdr-zone.active-red   { background:var(--red-bg); }
+.hdr-zone-indicator { position:absolute; left:0; top:0; bottom:0; width:3px; transition:background .4s,box-shadow .4s; }
+.hdr-zone.active-green .hdr-zone-indicator { background:var(--green); box-shadow:0 0 10px var(--green); }
+.hdr-zone.active-amber .hdr-zone-indicator { background:var(--amber); box-shadow:0 0 10px var(--amber); }
+.hdr-zone.active-red   .hdr-zone-indicator { background:var(--red);   box-shadow:0 0 10px var(--red); }
+.spend-bg-glow { position:absolute; inset:0; opacity:.05; transition:background 1s,opacity .6s; pointer-events:none; z-index:0; }
+.spend-number-wrap { flex:1; display:flex; align-items:center; padding:0 24px; position:relative; z-index:1; min-height:0; overflow:hidden; }
+.spend-inner { display:flex; align-items:baseline; gap:8px; }
+.spend-currency { font-family:var(--sans); font-size:24px; font-weight:300; color:var(--muted2); line-height:1; }
+.spend-amount { font-family:var(--sans); font-size:40px; font-weight:700; line-height:1; letter-spacing:-.02em; transition:color .4s; }
+.spend-pence { font-family:var(--sans); font-size:20px; font-weight:300; color:var(--muted2); line-height:1; }
+.spend-meta { display:flex; gap:0; flex-shrink:0; border-top:1px solid var(--border); position:relative; z-index:1; }
+.smeta { display:flex; flex-direction:column; gap:2px; padding:7px 14px; border-right:1px solid var(--border); flex:1; }
+.smeta:last-child { border-right:none; }
+.smeta-label { font-size:8px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted2); }
+.smeta-val { font-size:15px; font-weight:700; font-family:var(--sans); letter-spacing:.04em; color:var(--text); }
+
+/* ── Zones (header) ── */
+.zone-name { font-family:var(--sans); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.zone-name.green { color:var(--green); } .zone-name.amber { color:var(--amber); } .zone-name.red { color:var(--red); }
+.zone-rule { font-size:8px; color:var(--muted2); margin-top:2px; letter-spacing:.04em; }
+.zone-range { font-family:var(--sans); font-size:11px; font-weight:600; white-space:nowrap; }
+
+/* ── Intent feed ── */
+.intent-panel { grid-column:1; grid-row:2; min-height:0; }
+.intent-scroll { flex:1; overflow-y:auto; overflow-x:hidden; min-height:0; }
+.intent-row {
+  display:grid; grid-template-columns:1fr auto;
+  align-items:center; gap:8px;
+  padding:9px 14px; border-bottom:1px solid var(--border);
+  font-size:11px; line-height:1.4;
+  transition:background .2s;
+  animation:slideIn .25s ease;
+}
+@keyframes slideIn { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+.intent-row.hit  { background:var(--blue-bg); }
+.intent-row.miss { opacity:.55; }
+.intent-text { color:var(--text); }
+.intent-text em { font-style:normal; color:var(--muted2); font-size:10px; display:block; margin-top:3px; letter-spacing:.06em; }
+.intent-badge {
+  font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+  padding:3px 8px; border:1px solid; white-space:nowrap; font-family:var(--sans);
+}
+.intent-badge.match { color:var(--blue); border-color:var(--blue-dim); background:var(--blue-bg); }
+.intent-badge.skip  { color:var(--muted2); border-color:var(--border2); }
+.target-row {
+  padding:8px 14px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex-shrink:0;
+}
+.target-pill {
+  font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  padding:3px 9px; border:1px solid var(--green-dim); color:var(--green); background:var(--green-bg);
+  font-family:var(--sans);
+}
+.target-label { font-size:9px; color:var(--muted2); letter-spacing:.1em; text-transform:uppercase; }
+
+/* ── Action queue ── */
+.queue-panel { grid-column:2; grid-row:2; min-height:0; }
+.queue-scroll { flex:1; overflow-y:auto; overflow-x:hidden; min-height:0; }
+.action-row {
+  display:grid; grid-template-columns:64px 1fr 46px 76px;
+  align-items:center; gap:8px;
+  padding:9px 14px; border-bottom:1px solid var(--border);
+  transition:background .15s; animation:slideIn .25s ease;
+}
+.action-row:hover { background:var(--surface2); }
+.action-row.done { opacity:.35; }
+.a-badge { font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; padding:3px 5px; border:1px solid; text-align:center; font-family:var(--sans); }
+.a-badge.pending  { color:var(--amber); border-color:var(--amber-dim); background:var(--amber-bg); }
+.a-badge.executed { color:var(--green); border-color:var(--green-dim); background:var(--green-bg); }
+.a-badge.blocked  { color:var(--red);   border-color:var(--red-dim);   background:var(--red-bg); }
+.a-badge.paused   { color:var(--muted2); border-color:var(--border2); }
+.a-desc { font-size:11px; line-height:1.4; color:var(--text); }
+.a-sub  { font-size:10px; color:var(--muted2); margin-top:2px; }
+.a-cd { font-family:var(--sans); font-size:26px; font-weight:700; color:var(--amber); text-align:right; transition:color .3s; }
+.a-cd.urgent { color:var(--red); animation:flash .4s ease-in-out infinite alternate; }
+@keyframes flash { from{opacity:1} to{opacity:.4} }
+.block-btn {
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  padding:5px 8px; background:transparent; border:1px solid var(--red-dim); color:var(--red);
+  cursor:pointer; transition:background .15s; width:100%;
+}
+.block-btn:hover { background:var(--red-bg); }
+.block-btn:disabled { opacity:.22; cursor:default; }
+
+/* ── Audit log ── */
+.audit-panel { grid-column:3; grid-row:2/4; border-left:1px solid var(--border); min-height:0; }
+.log-scroll { flex:1; overflow-y:auto; overflow-x:hidden; min-height:0; }
+.log-entry { display:grid; grid-template-columns:66px 1fr; gap:8px; padding:8px 14px; border-bottom:1px solid var(--border); animation:fadeUp .2s ease; }
+@keyframes fadeUp { from{opacity:0;transform:translateY(-3px)} to{opacity:1;transform:translateY(0)} }
+.log-t { font-size:9px; color:var(--muted2); padding-top:2px; letter-spacing:.04em; }
+.log-m { font-size:11px; line-height:1.5; }
+.log-m.g { color:var(--green); } .log-m.a { color:var(--amber); } .log-m.r { color:var(--red); } .log-m.b { color:var(--blue); } .log-m.m { color:var(--muted2); }
+
+/* ── Creative validator ── */
+.creative-panel { grid-column:1/3; grid-row:3; min-height:0; }
+.creative-inner { flex:1; display:grid; grid-template-columns:1fr 220px; gap:0; min-height:0; }
+.creative-input-wrap { display:flex; flex-direction:column; border-right:1px solid var(--border); }
+textarea.creative-ta {
+  flex:1; background:var(--surface); border:none; outline:none; resize:none;
+  color:var(--text); font-family:var(--mono); font-size:11px; line-height:1.7;
+  padding:14px 16px; min-height:0;
+}
+textarea.creative-ta::placeholder { color:var(--muted); }
+.creative-actions { display:flex; align-items:center; gap:8px; padding:8px 12px; border-top:1px solid var(--border); flex-shrink:0; background:var(--surface); }
+.check-btn {
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  padding:7px 16px; background:transparent; border:1px solid var(--border2); color:var(--muted2); cursor:pointer; transition:all .15s;
+}
+.check-btn:hover { border-color:var(--text); color:var(--text); }
+.char-count { font-size:10px; color:var(--muted2); margin-left:auto; }
+
+.creative-results { display:flex; flex-direction:column; overflow-y:auto; padding:0; background:var(--surface); }
+.rule-row {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:9px 14px; border-bottom:1px solid var(--border);
+  font-size:11px; transition:background .2s;
+}
+.rule-row.pass { background:var(--green-bg); }
+.rule-row.fail { background:var(--red-bg); }
+.rule-row.idle { }
+.rule-icon { font-size:14px; font-weight:700; flex-shrink:0; margin-top:1px; font-family:var(--sans); }
+.rule-icon.pass { color:var(--green); } .rule-icon.fail { color:var(--red); } .rule-icon.idle { color:var(--muted2); }
+.rule-label { font-size:10px; color:var(--text); font-weight:700; font-family:var(--sans); letter-spacing:.04em; }
+.rule-detail { font-size:10px; color:var(--muted2); margin-top:2px; line-height:1.4; }
+.verdict-row {
+  padding:10px 14px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between; flex-shrink:0;
+}
+.verdict-label { font-family:var(--sans); font-size:14px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+.verdict-label.pass { color:var(--green); text-shadow:0 0 20px var(--green); }
+.verdict-label.fail { color:var(--red); text-shadow:0 0 20px var(--red); }
+.verdict-label.idle { color:var(--muted2); }
+.verdict-score { font-family:var(--sans); font-size:12px; color:var(--muted2); }
+
+/* ── Burn bar ── */
+.burn-section { padding:6px 14px 0; flex-shrink:0; }
+.burn-track { width:100%; height:6px; background:var(--surface2); border:1px solid var(--border); position:relative; margin:5px 0 3px; }
+.burn-fill { position:absolute; left:0; top:0; height:100%; transition:width .35s ease,background .4s,box-shadow .4s; }
+.burn-fill.green { background:var(--green); box-shadow:0 0 16px var(--green); }
+.burn-fill.amber { background:var(--amber); box-shadow:0 0 16px var(--amber); }
+.burn-fill.red   { background:var(--red);   box-shadow:0 0 16px var(--red); }
+.burn-label-row { display:flex; justify-content:space-between; font-size:9px; color:var(--muted2); letter-spacing:.08em; }
+.tick-v { position:absolute; top:-4px; bottom:-4px; width:1px; opacity:.5; }
+
+/* ── Footer ── */
+footer { display:flex; align-items:center; gap:8px; padding:0 16px; border-top:1px solid var(--border2); background:linear-gradient(0deg, rgba(255,255,255,.01) 0%, transparent 100%); }
+.ctrl {
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  padding:7px 14px; background:transparent; border:1px solid var(--border2); color:var(--muted2); cursor:pointer; transition:all .15s; white-space:nowrap;
+}
+.ctrl:hover { border-color:var(--text); color:var(--text); }
+.ctrl.go   { border-color:var(--green-dim); color:var(--green); } .ctrl.go:hover   { background:var(--green-bg); }
+.ctrl.stop { border-color:var(--red-dim);   color:var(--red); }   .ctrl.stop:hover { background:var(--red-bg); }
+.ctrl.warn { border-color:var(--amber-dim); color:var(--amber); } .ctrl.warn:hover { background:var(--amber-bg); }
+.foot-sep { flex:1; }
+.speed-wrap { display:flex; align-items:center; gap:8px; }
+.speed-lbl { font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted2); }
+select.speed-sel { font-family:var(--mono); font-size:9px; background:var(--surface2); border:1px solid var(--border2); color:var(--text); padding:6px 10px; cursor:pointer; }
+.foot-status { font-size:10px; letter-spacing:.16em; color:var(--muted2); text-transform:uppercase; min-width:90px; text-align:right; }
+
+/* ── Alert ── */
+.alert-wrap { position:fixed; inset:0; background:rgba(0,0,0,.85); display:flex; align-items:center; justify-content:center; z-index:1000; opacity:0; pointer-events:none; transition:opacity .2s; }
+.alert-wrap.on { opacity:1; pointer-events:all; }
+.alert-box { background:var(--surface); max-width:460px; width:90%; border:1px solid var(--red); box-shadow:0 0 80px rgba(255,45,74,.2); animation:pop .25s cubic-bezier(.34,1.56,.64,1); }
+@keyframes pop { from{transform:scale(.92)} to{transform:scale(1)} }
+.alert-head { padding:18px 22px; border-bottom:1px solid var(--red-dim); display:flex; align-items:center; gap:12px; }
+.alert-icon { width:28px; height:28px; background:var(--red-bg); border:1px solid var(--red); display:grid; place-items:center; font-size:13px; color:var(--red); font-weight:700; flex-shrink:0; }
+.alert-title { font-family:var(--sans); font-size:17px; font-weight:700; color:var(--red); letter-spacing:.06em; }
+.alert-body  { padding:18px 22px; font-size:12px; line-height:1.7; color:var(--text); }
+.alert-foot  { padding:14px 22px; border-top:1px solid var(--border); display:flex; gap:10px; }
+.alert-btn { font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; padding:9px 18px; background:transparent; border:1px solid; cursor:pointer; transition:background .15s; }
+.alert-btn.ack { border-color:var(--border2); color:var(--muted2); } .alert-btn.ack:hover { background:var(--border); }
+.alert-btn.rst { border-color:var(--red); color:var(--red); } .alert-btn.rst:hover { background:var(--red-bg); }
+
+::-webkit-scrollbar { width:3px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+::-webkit-scrollbar-thumb:hover { background:var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="hdr-left">
+      <div class="logo">Spend<em>Tripwire</em></div>
+      <div class="sys-tag">Buy-Side Agent Monitor</div>
+      <div style="display:flex;align-items:stretch;gap:0;height:100%;border-left:1px solid var(--border2);margin-left:4px;">
+        <div class="hdr-zone active-green" id="zb-green">
+          <div class="hdr-zone-indicator"></div>
+          <div><div class="zone-name green">Green</div><div class="zone-rule">Agent commits freely</div></div>
+          <div class="zone-range" style="color:var(--green);opacity:.8">£0–500</div>
+        </div>
+        <div class="hdr-zone" id="zb-amber">
+          <div class="hdr-zone-indicator"></div>
+          <div><div class="zone-name amber">Amber</div><div class="zone-rule">30s override window</div></div>
+          <div class="zone-range" style="color:var(--amber);opacity:.8">£500–800</div>
+        </div>
+        <div class="hdr-zone" id="zb-red">
+          <div class="hdr-zone-indicator"></div>
+          <div><div class="zone-name red">Red</div><div class="zone-rule">Hard pause</div></div>
+          <div class="zone-range" style="color:var(--red);opacity:.8">£800+</div>
+        </div>
+      </div>
+    </div>
+    <div class="hdr-right">
+      <div class="live-badge"><div class="live-dot"></div>AGENT LIVE</div>
+      <div class="hdr-clock" id="hdr-clock">--:--:--</div>
+    </div>
+  </header>
+
+  <div class="main-grid">
+
+    <!-- SPEND -->
+    <div class="panel spend-panel">
+      <div class="spend-bg-glow" id="spend-bg-glow"></div>
+      <div class="panel-head" style="position:relative;z-index:1;flex-shrink:0">
+        <span>Period spend</span>
+        <span class="panel-head-val">Budget: £1,000.00</span>
+      </div>
+      <div class="spend-number-wrap">
+        <div class="spend-inner">
+          <span class="spend-currency">£</span>
+          <span class="spend-amount green" id="spend-int">0</span>
+          <span class="spend-pence" id="spend-dec">.00</span>
+        </div>
+      </div>
+      <div class="burn-section">
+        <div class="burn-label-row"><span id="burn-pct-label">0% of budget</span><span>£1,000</span></div>
+        <div class="burn-track">
+          <div class="burn-fill green" id="burn-fill" style="width:0%"></div>
+          <div class="tick-v" style="left:50%;background:var(--amber)"></div>
+          <div class="tick-v" style="left:80%;background:var(--red)"></div>
+        </div>
+      </div>
+      <div class="spend-meta">
+        <div class="smeta"><span class="smeta-label">Bids fired</span><span class="smeta-val" id="s-bids">0</span></div>
+        <div class="smeta"><span class="smeta-label">Avg bid</span><span class="smeta-val" id="s-avg">—</span></div>
+        <div class="smeta"><span class="smeta-label">Matched intents</span><span class="smeta-val" id="s-matched" style="color:var(--blue)">0</span></div>
+        <div class="smeta"><span class="smeta-label">Blocked</span><span class="smeta-val" id="s-blocked">0</span></div>
+      </div>
+    </div>
+
+    <!-- ZONES -->
+
+    <!-- INTENT FEED -->
+    <div class="panel intent-panel">
+      <div class="panel-head">
+        <span>Conversational intent feed</span>
+        <span class="panel-head-val" id="intent-head" style="color:var(--blue)">Listening…</span>
+      </div>
+      <div class="target-row">
+        <span class="target-label">Targeting:</span>
+        <span class="target-pill">car insurance</span>
+        <span class="target-pill">home insurance</span>
+      </div>
+      <div class="intent-scroll" id="intent-list">
+        <div style="padding:18px 14px;color:var(--muted);font-size:11px;">Waiting for conversational signals…</div>
+      </div>
+    </div>
+
+    <!-- ACTION QUEUE -->
+    <div class="panel queue-panel">
+      <div class="panel-head">
+        <span>Override queue</span>
+        <span class="panel-head-val" id="q-head" style="color:var(--muted)">No pending actions</span>
+      </div>
+      <div class="queue-scroll" id="action-list">
+        <div style="padding:18px 14px;color:var(--muted);font-size:11px;">Agent in green zone — committing autonomously.</div>
+      </div>
+    </div>
+
+    <!-- AUDIT LOG -->
+    <div class="panel audit-panel">
+      <div class="panel-head">
+        <span>Audit log</span>
+        <span class="panel-head-val" id="log-count" style="color:var(--muted2)">0 events</span>
+      </div>
+      <div class="log-scroll" id="log-list"></div>
+    </div>
+
+    <!-- CREATIVE VALIDATOR -->
+    <div class="panel creative-panel">
+      <div class="panel-head">
+        <span>Creative guardrail validator</span>
+        <span class="panel-head-val" style="color:var(--muted)">Paste ad copy — check before it serves</span>
+      </div>
+      <div class="creative-inner">
+        <div class="creative-input-wrap">
+          <textarea class="creative-ta" id="creative-ta" placeholder='Paste ad copy here — e.g. "Get the cheapest car insurance guaranteed. No questions asked. Best price EVERY TIME. T&Cs apply."'></textarea>
+          <div class="creative-actions">
+            <button class="check-btn" onclick="checkCreative()">▶ Check copy</button>
+            <button class="check-btn" onclick="loadExample()">Load example</button>
+            <button class="check-btn" onclick="clearCreative()">Clear</button>
+            <span class="char-count" id="char-count">0 / 200 chars</span>
+          </div>
+        </div>
+        <div class="creative-results" id="creative-results">
+          <div class="verdict-row">
+            <span class="verdict-label idle" id="verdict-label">Awaiting copy</span>
+            <span class="verdict-score" id="verdict-score"></span>
+          </div>
+          <div class="rule-row idle" id="rule-forbidden">
+            <span class="rule-icon idle">—</span>
+            <div><div class="rule-label">No forbidden words</div><div class="rule-detail" id="rd-forbidden">guaranteed, cheapest, no questions asked, free, unlimited</div></div>
+          </div>
+          <div class="rule-row idle" id="rule-caps">
+            <span class="rule-icon idle">—</span>
+            <div><div class="rule-label">No ALL CAPS words</div><div class="rule-detail" id="rd-caps">Shouts erode brand trust</div></div>
+          </div>
+          <div class="rule-row idle" id="rule-super">
+            <span class="rule-icon idle">—</span>
+            <div><div class="rule-label">No unqualified superlatives</div><div class="rule-detail" id="rd-super">best, #1, leading — require substantiation</div></div>
+          </div>
+          <div class="rule-row idle" id="rule-disclaimer">
+            <span class="rule-icon idle">—</span>
+            <div><div class="rule-label">Disclaimer present</div><div class="rule-detail" id="rd-disclaimer">Must contain "T&amp;Cs apply" or "terms apply"</div></div>
+          </div>
+          <div class="rule-row idle" id="rule-length">
+            <span class="rule-icon idle">—</span>
+            <div><div class="rule-label">Length ≤ 200 chars</div><div class="rule-detail" id="rd-length">Fits conversational placement units</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <button class="ctrl go"   id="btn-start">▶ Start agent</button>
+    <button class="ctrl stop" id="btn-pause">⏸ Pause</button>
+    <button class="ctrl"      id="btn-reset">↺ Reset</button>
+    <button class="ctrl warn" id="btn-spike">⚡ Inject spike</button>
+    <div class="foot-sep"></div>
+    <div class="speed-wrap">
+      <span class="speed-lbl">Speed</span>
+      <select class="speed-sel" id="speed-sel">
+        <option value="1100">Slow</option>
+        <option value="500" selected>Normal</option>
+        <option value="180">Fast</option>
+      </select>
+    </div>
+    <div class="foot-status" id="foot-status">IDLE</div>
+  </footer>
+
+</div>
+
+<!-- Alert -->
+<div class="alert-wrap" id="alert-wrap">
+  <div class="alert-box">
+    <div class="alert-head"><div class="alert-icon">!</div><div class="alert-title">Hard pause triggered</div></div>
+    <div class="alert-body" id="alert-body">Spend has breached the red threshold.</div>
+    <div class="alert-foot">
+      <button class="alert-btn ack" onclick="dismissAlert()">Acknowledge only</button>
+      <button class="alert-btn rst" onclick="resetFromAlert()">Reset &amp; restart</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────
+const BUDGET=1000, GREEN_MAX=500, AMBER_MAX=800, OVERRIDE_WIN=30;
+
+// ── State ───────────────────────────────────────────────
+let spend=0,bidCount=0,bidTotal=0,blockedCount=0,matchedCount=0;
+let running=false,paused=false,hardPaused=false;
+let actionSeq=0,actions=[],logEvents=0;
+let bidInterval=null,intentInterval=null;
+let currentZone='green';
+
+const $=id=>document.getElementById(id);
+const fmt=n=>'£'+n.toFixed(2);
+const fmts=n=>{const s=n.toFixed(2).split('.');return[s[0],'.'+s[1]];};
+const now=()=>new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const rand=(a,b)=>Math.random()*(b-a)+a;
+
+setInterval(()=>{$('hdr-clock').textContent=now();},1000);
+$('hdr-clock').textContent=now();
+
+// ── Intent feed data ─────────────────────────────────────
+const TARGET_CATS=['car-insurance','home-insurance'];
+
+const INTENTS=[
+  {text:'"anyone know cheap car insurance for young drivers?"',                cat:'car-insurance',  match:true},
+  {text:'"what\'s a good home insurance policy for a flat?"',                  cat:'home-insurance', match:true},
+  {text:'"comparing broadband deals in Manchester"',                           cat:'broadband',      match:false},
+  {text:'"car insurance quotes — is Direct Line still good?"',                 cat:'car-insurance',  match:true},
+  {text:'"best energy tariffs right now for a 3-bed house"',                   cat:'energy',         match:false},
+  {text:'"home insurance that covers accidental damage?"',                      cat:'home-insurance', match:true},
+  {text:'"pet insurance monthly cost for a Labrador"',                          cat:'pet-insurance',  match:false},
+  {text:'"is telematics car insurance worth it for new drivers"',              cat:'car-insurance',  match:true},
+  {text:'"mortgage protection insurance — do I actually need it?"',            cat:'mortgage',       match:false},
+  {text:'"contents insurance for a rented flat in London"',                    cat:'home-insurance', match:true},
+  {text:'"which streaming service has the most films right now"',              cat:'entertainment',  match:false},
+  {text:'"third party vs comprehensive — which car insurance"',                cat:'car-insurance',  match:true},
+  {text:'"buildings insurance — is it included in my mortgage?"',              cat:'home-insurance', match:true},
+  {text:'"travel insurance for pre-existing conditions"',                       cat:'travel',         match:false},
+  {text:'"how much should I pay for car insurance at 23?"',                    cat:'car-insurance',  match:true},
+  {text:'"flood risk — does standard home insurance cover it?"',               cat:'home-insurance', match:true},
+  {text:'"gym membership deals near me"',                                       cat:'fitness',        match:false},
+  {text:'"adding a named driver to my car insurance"',                         cat:'car-insurance',  match:true},
+];
+let intentIdx=0;
+
+// ── Bid descriptors ──────────────────────────────────────
+const BID_TYPES=[
+  'Conversational placement — ChatGPT sidebar',
+  'Sponsored answer — Thrad intent match',
+  'In-thread recommendation unit',
+  'LLM-native ad — insurance comparison',
+  'Bid expansion — adjacent intent cluster',
+  'Daypart boost — 18:00–21:00 window',
+  'Creative rotation — variant B → D',
+  'Geo bid adjustment — London +12%',
+];
+
+// ── Logging ──────────────────────────────────────────────
+function log(msg,cls='m'){
+  logEvents++;
+  $('log-count').textContent=logEvents+' events';
+  const e=document.createElement('div');
+  e.className='log-entry';
+  e.innerHTML=`<span class="log-t">${now()}</span><span class="log-m ${cls}">${msg}</span>`;
+  $('log-list').prepend(e);
+  if($('log-list').children.length>200) $('log-list').lastElementChild.remove();
+}
+
+// ── Zone / UI updates ────────────────────────────────────
+function setZone(z){
+  if(z===currentZone) return;
+  currentZone=z;
+  ['green','amber','red'].forEach(n=>{
+    $('zb-'+n).className='hdr-zone'+(n===z?' active-'+n:'');
+  });
+  const col={green:'var(--green)',amber:'var(--amber)',red:'var(--red)'};
+  $('spend-int').style.color=col[z];
+  $('spend-bg-glow').style.background=col[z];
+  $('spend-bg-glow').style.opacity=z==='green'?'.04':'.07';
+  $('burn-fill').className='burn-fill '+z;
+}
+
+function updateUI(){
+  const pct=Math.min(spend/BUDGET*100,100);
+  const[ip,dp]=fmts(spend);
+  $('spend-int').textContent=ip;
+  $('spend-dec').textContent=dp;
+  $('burn-fill').style.width=pct+'%';
+  $('burn-pct-label').textContent=pct.toFixed(1)+'% of budget';
+  $('s-bids').textContent=bidCount;
+  $('s-avg').textContent=bidCount?fmt(bidTotal/bidCount):'—';
+  $('s-matched').textContent=matchedCount;
+  $('s-blocked').textContent=blockedCount;
+  $('s-blocked').style.color=blockedCount>0?'var(--red)':'var(--text)';
+  if(spend>=AMBER_MAX) setZone('red');
+  else if(spend>=GREEN_MAX) setZone('amber');
+  else setZone('green');
+}
+
+// ── Intent feed ──────────────────────────────────────────
+function fireIntent(){
+  if(!running||paused||hardPaused) return;
+  const intent=INTENTS[intentIdx % INTENTS.length];
+  intentIdx++;
+  const isMatch=intent.match;
+
+  const row=document.createElement('div');
+  row.className='intent-row '+(isMatch?'hit':'miss');
+  row.innerHTML=`
+    <div class="intent-text">${intent.text}<em>${intent.cat.replace('-',' ')}</em></div>
+    <span class="intent-badge ${isMatch?'match':'skip'}">${isMatch?'BID FIRED':'SKIP'}</span>`;
+  const list=$('intent-list');
+  if(list.querySelector('div[style]')) list.innerHTML='';
+  list.prepend(row);
+  if(list.children.length>30) list.lastElementChild.remove();
+
+  if(isMatch){
+    matchedCount++;
+    $('intent-head').textContent=matchedCount+' matched';
+    fireBidFromIntent(intent);
+  } else {
+    log(`Intent: ${intent.cat} — no match, skip`,'m');
+  }
+}
+
+// ── Bidder ───────────────────────────────────────────────
+function fireBidFromIntent(intent){
+  if(!running||paused||hardPaused) return;
+  if(spend>=AMBER_MAX){triggerHardPause();return;}
+
+  const amount=currentZone==='green'?rand(3,22):rand(8,42);
+  spend+=amount; bidCount++; bidTotal+=amount;
+  updateUI();
+
+  if(spend>=AMBER_MAX){triggerHardPause();return;}
+
+  const desc=BID_TYPES[Math.floor(Math.random()*BID_TYPES.length)];
+  if(currentZone==='amber'){
+    addAction(amount,desc);
+    log(`Intent match → bid +${fmt(amount)} — QUEUED for override`,'a');
+  } else {
+    log(`Intent match → bid +${fmt(amount)} → ${fmt(spend)} committed`,'b');
+  }
+}
+
+function addAction(amount,desc){
+  actionSeq++;
+  const id=actionSeq;
+  const a={id,desc:desc||BID_TYPES[0],amount,status:'pending',countdown:OVERRIDE_WIN};
+  actions.push(a);
+  const t=setInterval(()=>{
+    const x=actions.find(a=>a.id===id);
+    if(!x||x.status!=='pending'){clearInterval(t);return;}
+    x.countdown--;
+    if(x.countdown<=0){clearInterval(t);if(x.status==='pending')executeAction(id);}
+    renderQueue();
+  },1000);
+  a.timer=t;
+  renderQueue();
+}
+
+function executeAction(id){
+  const a=actions.find(x=>x.id===id);
+  if(!a||a.status!=='pending') return;
+  a.status='executed';
+  log(`Action #${id} executed — ${fmt(a.amount)} committed`,'g');
+  renderQueue();
+}
+
+function blockAction(id){
+  const a=actions.find(x=>x.id===id);
+  if(!a||a.status!=='pending') return;
+  clearInterval(a.timer);
+  a.status='blocked';
+  blockedCount++;
+  log(`Action #${id} BLOCKED — tombstoned`,'r');
+  renderQueue(); updateUI();
+}
+
+function renderQueue(){
+  const pending=actions.filter(a=>a.status==='pending');
+  $('q-head').textContent=pending.length>0?pending.length+' pending':'No pending actions';
+  $('q-head').style.color=pending.length>0?'var(--amber)':'var(--muted)';
+  const recent=[...actions].reverse().slice(0,20);
+  if(!recent.length){
+    $('action-list').innerHTML='<div style="padding:18px 14px;color:var(--muted);font-size:11px;">Agent in green zone — committing autonomously.</div>';
+    return;
+  }
+  $('action-list').innerHTML=recent.map(a=>{
+    const cd=a.status==='pending'
+      ?`<div class="a-cd${a.countdown<=8?' urgent':''}">${a.countdown}</div>`
+      :`<div class="a-cd" style="font-size:14px;color:var(--muted)">#${a.id}</div>`;
+    const btn=a.status==='pending'
+      ?`<button class="block-btn" onclick="blockAction(${a.id})">Block</button>`
+      :`<button class="block-btn" disabled>${a.status==='blocked'?'Blocked':'Done'}</button>`;
+    return`<div class="action-row${a.status!=='pending'?' done':''}">
+      <span class="a-badge ${a.status}">${a.status}</span>
+      <div><div class="a-desc">${a.desc}</div><div class="a-sub">${fmt(a.amount)} · ${a.status==='pending'?'awaiting…':a.status}</div></div>
+      ${cd}${btn}</div>`;
+  }).join('');
+}
+
+// ── Hard pause ───────────────────────────────────────────
+function triggerHardPause(){
+  if(hardPaused) return;
+  hardPaused=true; running=false;
+  clearInterval(bidInterval); clearInterval(intentInterval);
+  setZone('red');
+  $('foot-status').textContent='HALTED';
+  $('foot-status').style.color='var(--red)';
+  actions.forEach(a=>{if(a.status==='pending'){clearInterval(a.timer);a.status='paused';}});
+  renderQueue();
+  log(`HARD PAUSE — ${fmt(spend)} breached red threshold`,'r');
+  $('alert-body').textContent=`Spend reached ${fmt(spend)}, breaching the £800 red threshold. Agent halted. ${actions.filter(a=>a.status==='paused').length} pending actions tombstoned.`;
+  $('alert-wrap').classList.add('on');
+}
+
+// ── Agent controls ───────────────────────────────────────
+function startAgent(){
+  if(hardPaused) return;
+  running=true; paused=false;
+  clearInterval(bidInterval); clearInterval(intentInterval);
+  const ms=parseInt($('speed-sel').value);
+  intentInterval=setInterval(fireIntent, ms);
+  $('foot-status').textContent='RUNNING';
+  $('foot-status').style.color='var(--green)';
+  $('btn-pause').textContent='⏸ Pause';
+  log('Agent started — scanning conversational intents','g');
+}
+
+function pauseAgent(){
+  paused=!paused;
+  $('btn-pause').textContent=paused?'▶ Resume':'⏸ Pause';
+  $('foot-status').textContent=paused?'PAUSED':'RUNNING';
+  $('foot-status').style.color=paused?'var(--amber)':'var(--green)';
+  log(paused?'Agent paused':'Agent resumed','a');
+}
+
+function resetAll(){
+  clearInterval(bidInterval); clearInterval(intentInterval);
+  running=false;paused=false;hardPaused=false;
+  spend=0;bidCount=0;bidTotal=0;blockedCount=0;matchedCount=0;
+  actions=[];actionSeq=0;logEvents=0;intentIdx=0;
+  currentZone='';
+  updateUI(); setZone('green'); renderQueue();
+  $('foot-status').textContent='IDLE'; $('foot-status').style.color='';
+  $('btn-pause').textContent='⏸ Pause';
+  $('log-list').innerHTML=''; $('log-count').textContent='0 events';
+  $('intent-list').innerHTML='<div style="padding:18px 14px;color:var(--muted);font-size:11px;">Waiting for conversational signals…</div>';
+  $('intent-head').textContent='Listening…';
+  log('System reset','m');
+}
+
+function injectSpike(){
+  const spike=rand(100,180);
+  spend+=spike; bidTotal+=spike; bidCount++;
+  updateUI();
+  log(`⚡ Spike injected +${fmt(spike)} → ${fmt(spend)}`,'r');
+  if(spend>=AMBER_MAX){triggerHardPause();return;}
+  if(spend>=GREEN_MAX) addAction(spike,'Emergency spend reallocation — spike detected');
+}
+
+function dismissAlert(){ $('alert-wrap').classList.remove('on'); }
+function resetFromAlert(){ $('alert-wrap').classList.remove('on'); resetAll(); startAgent(); }
+
+$('speed-sel').onchange=()=>{
+  if(running&&!paused){
+    clearInterval(intentInterval);
+    intentInterval=setInterval(fireIntent,parseInt($('speed-sel').value));
+  }
+};
+
+// ── Creative validator ────────────────────────────────────
+const FORBIDDEN=['guaranteed','guarantee','cheapest','no questions asked','unlimited','free','zero cost','no catch','100%'];
+const SUPERLATIVES=['best','#1','number one','leading','top','unbeatable','lowest','highest rated','award-winning'];
+const DISCLAIMER_RE=/t&cs apply|terms apply|terms and conditions apply/i;
+const CAPS_RE=/\b[A-Z]{3,}\b/g;
+
+function setRule(id,state,detail){
+  const row=$('rule-'+id);
+  row.className='rule-row '+state;
+  const icon=row.querySelector('.rule-icon');
+  icon.className='rule-icon '+state;
+  icon.textContent=state==='pass'?'✓':state==='fail'?'✕':'—';
+  if(detail) $('rd-'+id).textContent=detail;
+}
+
+function checkCreative(){
+  const txt=$('creative-ta').value.trim();
+  if(!txt) return;
+  log('Creative copy submitted for guardrail check','b');
+
+  let passes=0,fails=0;
+
+  // Forbidden words
+  const foundForbidden=FORBIDDEN.filter(w=>txt.toLowerCase().includes(w));
+  if(foundForbidden.length){
+    setRule('forbidden','fail','Found: '+foundForbidden.join(', '));
+    fails++;
+  } else {
+    setRule('forbidden','pass','No forbidden words detected');
+    passes++;
+  }
+
+  // ALL CAPS
+  const capsWords=(txt.match(CAPS_RE)||[]).filter(w=>!['URL','UK','EU','TV','FAQs'].includes(w));
+  if(capsWords.length){
+    setRule('caps','fail','Found: '+capsWords.join(', '));
+    fails++;
+  } else {
+    setRule('caps','pass','No shouting detected');
+    passes++;
+  }
+
+  // Superlatives
+  const foundSuper=SUPERLATIVES.filter(w=>txt.toLowerCase().includes(w));
+  if(foundSuper.length){
+    setRule('super','fail','Unqualified: '+foundSuper.join(', '));
+    fails++;
+  } else {
+    setRule('super','pass','No unqualified superlatives');
+    passes++;
+  }
+
+  // Disclaimer
+  if(!DISCLAIMER_RE.test(txt)){
+    setRule('disclaimer','fail','Missing T&Cs or terms apply');
+    fails++;
+  } else {
+    setRule('disclaimer','pass','Disclaimer found');
+    passes++;
+  }
+
+  // Length
+  if(txt.length>200){
+    setRule('length','fail',txt.length+' chars — '+( txt.length-200)+' over limit');
+    fails++;
+  } else {
+    setRule('length','pass',txt.length+' of 200 chars used');
+    passes++;
+  }
+
+  const total=passes+fails;
+  const verdict=$('verdict-label');
+  const score=$('verdict-score');
+  if(fails===0){
+    verdict.className='verdict-label pass'; verdict.textContent='APPROVED';
+    score.textContent=passes+'/'+total+' rules passed';
+    log('Creative APPROVED — '+passes+'/'+total+' rules passed','g');
+  } else {
+    verdict.className='verdict-label fail'; verdict.textContent='BLOCKED';
+    score.textContent=fails+' violation'+(fails>1?'s':'');
+    log('Creative BLOCKED — '+fails+' violation'+(fails>1?'s':'')+' found','r');
+  }
+}
+
+function loadExample(){
+  $('creative-ta').value='Get the cheapest car insurance GUARANTEED — no questions asked. We\'re the BEST in the UK. Terms apply.';
+  updateCharCount();
+}
+
+function clearCreative(){
+  $('creative-ta').value='';
+  updateCharCount();
+  ['forbidden','caps','super','disclaimer','length'].forEach(id=>setRule(id,'idle',null));
+  $('verdict-label').className='verdict-label idle';
+  $('verdict-label').textContent='Awaiting copy';
+  $('verdict-score').textContent='';
+}
+
+function updateCharCount(){
+  const len=$('creative-ta').value.length;
+  $('char-count').textContent=len+' / 200 chars';
+  $('char-count').style.color=len>200?'var(--red)':len>160?'var(--amber)':'var(--muted)';
+}
+
+$('creative-ta').addEventListener('input',updateCharCount);
+
+// ── Wire controls ─────────────────────────────────────────
+$('btn-start').onclick=startAgent;
+$('btn-pause').onclick=pauseAgent;
+$('btn-reset').onclick=resetAll;
+$('btn-spike').onclick=injectSpike;
+
+updateUI(); renderQueue();
+log('SpendTripwire ready — press Start agent','m');
+</script>
+</body>
+</html>
