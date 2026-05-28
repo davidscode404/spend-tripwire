@@ -4,14 +4,6 @@ Spend Tripwire leverages agentic AI to bid on ad placements within LLM conversat
 
 ![](screenshots/spendtripwire.png)
 
----
-
-## Hackathon track
-
-**Buy-Side Agents** — agents that plan, bid, and buy ads inside LLM channels. Built for the advertiser: brands, agencies, DSPs.
-
----
-
 ## Setup
 
 No installation required. Spend Tripwire is a single self-contained HTML file with no external dependencies and no API keys.
