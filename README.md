@@ -1,0 +1,3 @@
+### Spend Tripwire
+
+Spend Tripwire leverages agentic AI to bid on ad placements within LLM conversation. On the left, there are (simulated) examples of user input. The agent bids only when target categories are identified. There are three different zones for budget governance. In the green zone, the agent agent fires a bid and commits the spend immediately upon recognition of a target category. Once the total surpasses £500, the agent enters the amber zone. Here, every bid is held in the override queue for 30 seconds before execution, allowing human-in-the-loop, to stop a bid, if necessary. And once the total surpasses £800, the agent stops entirely, and can only be restarted manually.
